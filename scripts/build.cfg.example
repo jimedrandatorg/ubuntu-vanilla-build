@@ -49,12 +49,6 @@
 
 # --- Optional Extras ---
 # TARGET_UBUNTU_STUDIO=0              # 0 | 1
-# TARGET_SYSTEM76_DRIVER=0            # 0 | 1 (build-popos.sh only: system76-driver for System76 hardware)
-
-# --- Optional Services & Tools ---
-# TARGET_FWUPD=0                      # 0 | 1 (pre-install fwupd; it is blocked during the build either way and can always be apt-installed later)
-# TARGET_OPENSSH_SERVER=0             # 0 | 1 (pre-install openssh-server)
-# TARGET_COCKPIT=0                    # 0 | 1 (pre-install Cockpit from the ${release}-backports pocket for the latest version)
 
 # --- Locale & Keyboard (for unattended builds) ---
 # TARGET_LOCALE=en_US.UTF-8           # e.g. en_US.UTF-8, de_DE.UTF-8, fr_FR.UTF-8

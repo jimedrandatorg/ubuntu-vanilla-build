@@ -354,9 +354,6 @@ For advanced configurations, environment variables can be used instead of CLI fl
 
 ### Feature & Customization Variables
 - `TARGET_UBUNTU_STUDIO` - Set to `1` to include Ubuntu Studio packages.
-- `TARGET_FWUPD` - Set to `1` to pre-install `fwupd` as the last build step (default: `0`). Either way, fwupd is banned via an APT pin for the whole build so nothing can pull it in; the pin is removed before the ISO is finalized, so `sudo apt install fwupd` always works on the installed system.
-- `TARGET_OPENSSH_SERVER` - Set to `1` to pre-install `openssh-server` (default: `0`).
-- `TARGET_COCKPIT` - Set to `1` to pre-install [Cockpit](https://cockpit-project.org/) from the `${release}-backports` pocket for the latest version, as recommended upstream (default: `0`). The backports pocket is always configured, so it can also be installed later with `sudo apt install -t <release>-backports cockpit`.
 - `TARGET_GNOME_INSTALL_RECOMMENDS` - Set to `1` to install GNOME with recommends.
 - `TARGET_PACSTALL` - Set to `0` to skip Pacstall installation (default: `1`).
 - `TARGET_PACKAGE_REMOVE` - Space-separated list of packages to remove from target system.
@@ -492,8 +489,7 @@ After a successful build, the following files are placed in your home directory 
 ## Package and Policy Details
 
 ### Core Policies
-- **No Snap Policy**: `snapd` is blocked via APT pinning (`Pin-Priority: -1`) to ensure a snap-free Ubuntu experience. The Snap app-store backends (`gnome-software-plugin-snap`, `plasma-discover-backend-snap`) are pinned out too; the Flatpak backends (`gnome-software-plugin-flatpak`, `plasma-discover-backend-flatpak`) are installed instead.
-- **No fwupd During Build**: `fwupd` is pinned out for the entire build so no package can pull it in. Unlike the snapd pin this one is build-time only — it is dropped before the ISO is finalized, and `TARGET_FWUPD=1` / `--fwupd` pre-installs fwupd on request.
+- **No Snap Policy**: `snapd` is blocked via APT pinning (`Pin-Priority: -1`) to ensure a snap-free Ubuntu experience.
 - **Package Availability Checks**: Optional package sets (e.g. Ubuntu Studio) are checked for availability, installability, and hidden snapd dependencies before installation; unavailable ones are skipped with a log message.
 - **Browser Repositories**: Brave, LibreWolf, and Firefox repositories are always configured (even if browsers aren't pre-installed).
 
@@ -509,11 +505,11 @@ Each desktop environment has a carefully curated package set:
 - **MATE**: Full or core MATE desktop with `xorg`, `lightdm`, and `slick-greeter`; optional extras available.
 - **Cinnamon**: Full Cinnamon desktop with `xorg`, `lightdm`, and `slick-greeter`.
 - **Budgie**: Full Budgie desktop with `xorg`, `lightdm`, and `slick-greeter`.
-- **KDE Plasma**: Selectable tier (`kde-plasma-desktop`, `kde-standard`, or `kde-full`); SDDM uses Plasma's own Breeze theme, installed explicitly and pinned via `/etc/sddm.conf.d`; Slick SDDM packages (any name combining `slick` and `sddm`) are excluded with an APT pin (`Pin-Priority: -1`), and any non-Breeze `sddm-theme-*` package pulled in by a metapackage is purged, so third-party themes cannot take over the login screen; Discover ships with the Flatpak backend (the Snap backend is blocked).
+- **KDE Plasma**: Selectable tier (`kde-plasma-desktop`, `kde-standard`, or `kde-full`).
 
 ### Special Features
 - **Pacstall**: Installed by default via the official script from [pacstall.dev](https://pacstall.dev); disable with `--no-pacstall` or `TARGET_PACSTALL=0`.
-- **Flatpak**: Pre-configured with Flathub repository; GNOME Software Flatpak plugin included for GNOME, Discover Flatpak backend for KDE Plasma.
+- **Flatpak**: Pre-configured with Flathub repository; GNOME Software plugin included for GNOME desktop.
 - **Ubuntu Studio**: Optional creative package set (audio, graphics, photography, publishing, video); unavailable dependencies are automatically skipped with logging.
 - **Kernel Management**: HWE metapackages automatically selected based on release and kernel flavor (unless overridden with `TARGET_KERNEL_PACKAGE`).
 

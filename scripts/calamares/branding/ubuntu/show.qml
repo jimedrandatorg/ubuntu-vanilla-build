@@ -60,12 +60,12 @@ Presentation
 
     Slide
     {
-        centeredText: qsTr( "No Snap: snapd and the Snap app-store backends (gnome-software-plugin-snap, plasma-discover-backend-snap) are pinned out by APT policy. Use APT, Flatpak, and your preferred formats instead, unless you add Snap yourself later." )
+        centeredText: qsTr( "No Snap: snapd is not installed by default. Use APT, Flatpak, and your preferred formats instead of Snap, unless you add it yourself later." )
     }
 
     Slide
     {
-        centeredText: qsTr( "Flatpak with Flathub is installed, and the app store uses it: GNOME builds ship gnome-software-plugin-flatpak, KDE Plasma builds ship Discover with the Flatpak backend. Vendor APT sources for Brave, Librewolf, and Mozilla Firefox are always configured; which browsers are preinstalled depends on how this ISO was built. Pacstall is included via the upstream official script when enabled at build time (the default)." )
+        centeredText: qsTr( "Flatpak with Flathub is installed. Vendor APT sources for Brave, Librewolf, and Mozilla Firefox are always configured; which of those browsers are preinstalled depends on how this ISO was built. Pacstall is included via the upstream official script when enabled at build time (the default). Browsers present on the live system are kept after installation." )
     }
 
     Slide

@@ -370,8 +370,6 @@ function set_defaults() {
     # Only env/CLI paths should set these.
     # TARGET_SYSTEM76_DRIVER: left unset here so resolve_system76_driver_choice()
     # can distinguish "user never specified" (unset) from an explicit 0/1.
-    # TARGET_FWUPD, TARGET_OPENSSH_SERVER, TARGET_COCKPIT: left unset so
-    # resolve_optional_service_choices() can prompt (all default 0).
     export TARGET_NAME="${TARGET_NAME:-}"
     export GRUB_LIVEBOOT_LABEL="${GRUB_LIVEBOOT_LABEL:-Try Pop!_OS without installing}"
 }
@@ -475,33 +473,11 @@ function set_target_kernel_package_from_flavor() {
 
 function block_snapd() {
     install -d /etc/apt/preferences.d
-    # Also pin the Snap store backends: installing gnome-software-plugin-snap
-    # or plasma-discover-backend-snap would drag snapd back in. Flatpak
-    # backends (gnome-software-plugin-flatpak / plasma-discover-backend-flatpak)
-    # are installed instead.
     cat <<'EOF' > /etc/apt/preferences.d/nosnap.pref
-Package: snapd gnome-software-plugin-snap plasma-discover-backend-snap
+Package: snapd
 Pin: release *
 Pin-Priority: -1
 EOF
-}
-
-# fwupd is banned while the image is being built: nothing may pull it in via
-# Depends/Recommends. Unlike the permanent snapd pin, this one is build-time
-# only — finish_up() removes it (and the TARGET_FWUPD=1 path lifts it before
-# pre-installing), so users can 'apt install fwupd' on the installed system.
-function block_fwupd() {
-    install -d /etc/apt/preferences.d
-    cat <<'EOF' > /etc/apt/preferences.d/nofwupd-build.pref
-# Build-time only: removed before the ISO is finalized.
-Package: fwupd
-Pin: release *
-Pin-Priority: -1
-EOF
-}
-
-function unblock_fwupd() {
-    rm -f /etc/apt/preferences.d/nofwupd-build.pref
 }
 
 function apt_install_available() {
@@ -611,7 +587,6 @@ function install_lightdm_desktop() {
 
 function customize_image() {
     block_snapd
-    block_fwupd
 
     case "${TARGET_DESKTOP:-gnome}" in
         gnome)
@@ -708,43 +683,6 @@ function customize_image() {
                     exit 1
                     ;;
             esac
-            # Keep the login screen on Plasma's own SDDM theme. Ubuntu's sddm
-            # package satisfies its theme dependency with whatever alternative
-            # the resolver picks first (e.g. sddm-theme-debian-maui), which
-            # looks nothing like Plasma. Install Breeze explicitly and pin it
-            # in sddm.conf.d so third-party themes cannot take over the greeter.
-            echo "=====> SDDM: forcing Plasma's Breeze theme"
-            apt-get install -y --no-install-recommends sddm sddm-theme-breeze
-            install -d /etc/sddm.conf.d
-            cat <<'EOF' > /etc/sddm.conf.d/10-ubuntu-vanilla-breeze.conf
-[Theme]
-Current=breeze
-EOF
-            # Exclude Slick SDDM (and friends) outright: pin every package
-            # whose name combines "slick" with "sddm" so nothing can install
-            # a third-party SDDM re-theme, during the build or afterwards.
-            cat <<'EOF' > /etc/apt/preferences.d/no-slick-sddm.pref
-# The login screen stays on Plasma's stock Breeze theme.
-Package: *slick*sddm* *sddm*slick*
-Pin: release *
-Pin-Priority: -1
-EOF
-            # Safety net: purge any non-Breeze sddm-theme-* package that a
-            # desktop metapackage may have pulled in (e.g. the resolver's
-            # default sddm-theme-debian-maui). sddm-theme-breeze satisfies
-            # sddm's theme dependency, so removing the others is safe.
-            local _extra_sddm_themes
-            _extra_sddm_themes="$(dpkg-query -W -f='${Package}\n' 'sddm-theme-*' 2>/dev/null | grep -vx 'sddm-theme-breeze' || true)"
-            if [[ -n "$_extra_sddm_themes" ]]; then
-                echo "=====> SDDM: removing non-Breeze theme packages: ${_extra_sddm_themes//$'\n'/ }"
-                # shellcheck disable=SC2086
-                apt-get purge -y $_extra_sddm_themes
-            fi
-            # Discover app store: Flatpak backend in, Snap backend pinned out
-            # (see block_snapd). kde-plasma-desktop does not always pull
-            # plasma-discover itself, so install it explicitly.
-            echo "=====> Discover: plasma-discover + Flatpak backend (Snap backend blocked)"
-            apt-get install -y plasma-discover plasma-discover-backend-flatpak
             ;;
         *)
             >&2 echo "Unsupported desktop variant '${TARGET_DESKTOP:-}'. Add install logic for this variant in customize_image()."
@@ -900,38 +838,6 @@ EOF
         echo "=====> System76 driver: skipped (repos remain configured; apt install system76-driver on System76 hardware)"
     fi
 
-    # fwupd stays banned for the whole build (see block_fwupd). Pre-install it
-    # only on explicit request; either way the installed system can add it
-    # later because finish_up() drops the build-time pin.
-    if [[ "${TARGET_FWUPD:-0}" == "1" ]]; then
-        echo "=====> fwupd: pre-installing on request (lifting the build-time block)"
-        unblock_fwupd
-        apt-get install -y fwupd
-    else
-        echo "=====> fwupd: not pre-installed (blocked during build; 'sudo apt install fwupd' works on the installed system)"
-    fi
-
-    if [[ "${TARGET_OPENSSH_SERVER:-0}" == "1" ]]; then
-        echo "=====> OpenSSH server: pre-installing"
-        apt-get install -y openssh-server
-    else
-        echo "=====> OpenSSH server: not pre-installed ('sudo apt install openssh-server' when needed)"
-    fi
-
-    # Cockpit upstream recommends the ${release}-backports build for the
-    # latest version (https://cockpit-project.org/running.html#ubuntu);
-    # chroot_prepare adds the backports pocket to sources.list. Fall back to
-    # the main archive if the backports pocket has no cockpit yet.
-    if [[ "${TARGET_COCKPIT:-0}" == "1" ]]; then
-        echo "=====> Cockpit: pre-installing from ${TARGET_UBUNTU_VERSION}-backports"
-        if ! apt-get install -y -t "${TARGET_UBUNTU_VERSION}-backports" cockpit; then
-            echo "=====> Cockpit: no installable candidate in ${TARGET_UBUNTU_VERSION}-backports; installing from the main archive"
-            apt-get install -y cockpit
-        fi
-    else
-        echo "=====> Cockpit: not pre-installed ('sudo apt install -t ${TARGET_UBUNTU_VERSION}-backports cockpit' when needed)"
-    fi
-
     apt-get install -y \
         git \
         vim \
@@ -1020,9 +926,6 @@ function check_settings() {
     assert_bool_var TARGET_UBUNTU_STUDIO
     assert_bool_var TARGET_PACSTALL 1
     assert_bool_var TARGET_SYSTEM76_DRIVER
-    assert_bool_var TARGET_FWUPD
-    assert_bool_var TARGET_OPENSSH_SERVER
-    assert_bool_var TARGET_COCKPIT
     if [[ "${TARGET_DESKTOP:-}" == "mate" ]]; then
         case "${TARGET_MATE_PACKAGE:-mate-desktop-environment}" in
             full)
@@ -1075,9 +978,6 @@ function host_help() {
     echo "  TARGET_FIREFOX_POPOS=0|1                 Pre-install Firefox as Pop!_OS's native deb (optional; default 0; verified real browser, not a snap stub)"
     echo "  TARGET_THUNDERBIRD=0|1                   Pre-install Thunderbird from Mozilla PPA (optional; default 0; PPA always added)"
     echo "  TARGET_UBUNTU_STUDIO=0|1                 Ubuntu Studio metapackages (optional; default 0)"
-    echo "  TARGET_FWUPD=0|1                         Pre-install fwupd (optional; default 0; fwupd is blocked during the build either way)"
-    echo "  TARGET_OPENSSH_SERVER=0|1                Pre-install openssh-server (optional; default 0)"
-    echo "  TARGET_COCKPIT=0|1                       Pre-install Cockpit from the backports pocket (optional; default 0)"
     echo "  TARGET_SYSTEM76_DRIVER=0|1               Pre-install system76-driver for System76 hardware (optional; default 0)"
     echo "  TARGET_GNOME_INSTALL_RECOMMENDS=0|1       GNOME install with recommends (optional; default 0)"
     echo "  --kernel=system76|generic|lowlatency    Kernel: System76 (stable branch, Pop!_OS repos) or Ubuntu HWE"
@@ -1096,9 +996,6 @@ function host_help() {
     echo "  --ubuntu-studio / --no-ubuntu-studio     Ubuntu Studio metapackage set (heavy)"
     echo "  --pacstall / --no-pacstall               Install Pacstall package manager (default: yes)"
     echo "  --system76-driver / --no-system76-driver  Pre-install system76-driver for System76 hardware (default: no)"
-    echo "  --fwupd / --no-fwupd                     Pre-install fwupd (default: no; blocked during the build either way)"
-    echo "  --openssh-server / --no-openssh-server   Pre-install openssh-server (default: no)"
-    echo "  --cockpit / --no-cockpit                 Pre-install Cockpit from backports (default: no)"
     echo "  --locale=LOCALE                          System locale (e.g. en_US.UTF-8) for unattended builds"
     echo "  --keyboard-layout=LAYOUT                 Keyboard layout code (e.g. us, de, fr) for unattended builds"
     echo "  --keyboard-variant=VARIANT               Keyboard variant (e.g. intl, nodeadkeys; optional)"
@@ -1361,9 +1258,6 @@ function run_chroot() {
         TARGET_UBUNTU_STUDIO="${TARGET_UBUNTU_STUDIO:-0}" \
         TARGET_PACSTALL="${TARGET_PACSTALL:-1}" \
         TARGET_SYSTEM76_DRIVER="${TARGET_SYSTEM76_DRIVER:-0}" \
-        TARGET_FWUPD="${TARGET_FWUPD:-0}" \
-        TARGET_OPENSSH_SERVER="${TARGET_OPENSSH_SERVER:-0}" \
-        TARGET_COCKPIT="${TARGET_COCKPIT:-0}" \
         TARGET_LOCALE="${TARGET_LOCALE:-}" \
         TARGET_KEYBOARD_LAYOUT="${TARGET_KEYBOARD_LAYOUT:-}" \
         TARGET_KEYBOARD_VARIANT="${TARGET_KEYBOARD_VARIANT:-}" \
@@ -2131,55 +2025,6 @@ function resolve_system76_driver_choice() {
     fi
 }
 
-# Optional service/tool pre-installs: fwupd, OpenSSH server, Cockpit.
-# All default to "no" — the point is a lean image where the user opts in.
-function resolve_optional_service_choices() {
-    if [[ -z "${TARGET_FWUPD+x}" ]]; then
-        if prompts_enabled; then
-            ui_heading "fwupd (firmware updater)"
-            echo "    fwupd is banned while the ISO is built, so no package can drag it in."
-            echo "    You can still pre-install it here as the very last build step, or add it"
-            echo "    yourself later on the installed system with 'sudo apt install fwupd'."
-            if ui_confirm "Pre-install fwupd?" n; then
-                export TARGET_FWUPD=1
-            else
-                export TARGET_FWUPD=0
-            fi
-            ui_ok "TARGET_FWUPD=$TARGET_FWUPD"
-        else
-            export TARGET_FWUPD=0
-        fi
-    fi
-
-    if [[ -z "${TARGET_OPENSSH_SERVER+x}" ]]; then
-        if prompts_enabled; then
-            interactive_toggle_pick TARGET_OPENSSH_SERVER \
-                "OpenSSH server" \
-                "Pre-install openssh-server (remote SSH access enabled on the installed system)" \
-                "Skip OpenSSH server" \
-                "OpenSSH server"
-        else
-            export TARGET_OPENSSH_SERVER=0
-        fi
-    fi
-
-    if [[ -z "${TARGET_COCKPIT+x}" ]]; then
-        if prompts_enabled; then
-            interactive_toggle_pick TARGET_COCKPIT \
-                "Cockpit (web admin console, from ${TARGET_UBUNTU_VERSION:-release}-backports for the latest version)" \
-                "Pre-install cockpit from the backports pocket" \
-                "Skip Cockpit" \
-                "Cockpit"
-        else
-            export TARGET_COCKPIT=0
-        fi
-    fi
-
-    export TARGET_FWUPD="${TARGET_FWUPD:-0}"
-    export TARGET_OPENSSH_SERVER="${TARGET_OPENSSH_SERVER:-0}"
-    export TARGET_COCKPIT="${TARGET_COCKPIT:-0}"
-}
-
 function interactive_installer_pick() {
     if ! prompts_enabled; then
         ui_err "No terminal is available. Use --installer=calamares|ubiquity."
@@ -2364,11 +2209,6 @@ function print_build_summary() {
     ui_kv "Ubuntu Studio"  "${TARGET_UBUNTU_STUDIO:-0}"
     ui_kv "Pacstall"        "${TARGET_PACSTALL:-1}"
     ui_kv "System76 driver" "${TARGET_SYSTEM76_DRIVER:-0}"
-    ui_kv "fwupd"           "${TARGET_FWUPD:-0}  (blocked during build either way)"
-    ui_kv "OpenSSH server"  "${TARGET_OPENSSH_SERVER:-0}"
-    local _cockpit="${TARGET_COCKPIT:-0}"
-    [[ "$_cockpit" == "1" ]] && _cockpit="1  (from ${TARGET_UBUNTU_VERSION:-release}-backports)"
-    ui_kv "Cockpit"         "$_cockpit"
     if [[ "${ADVANCED_MODE:-0}" == "1" ]]; then
         ui_kv "Advanced mode"   "enabled (workspace preserved, package cache active)"
     fi
@@ -2447,8 +2287,7 @@ function generate_config_wizard() {
 
     local _release _kernel _desktop _installer _mirror
     local _brave _librewolf _firefox _firefox_esr _thunderbird
-    local _pacstall _ubuntu_studio _system76_driver _fwupd _openssh _cockpit
-    local _locale _keyboard_layout _keyboard_variant
+    local _pacstall _ubuntu_studio _system76_driver _locale _keyboard_layout _keyboard_variant
     local _advanced _name _workspace _output
 
     # Release
@@ -2510,18 +2349,6 @@ function generate_config_wizard() {
     read -r -p "  Pre-install system76-driver (System76 hardware)? (0/1) [0]: " _system76_driver
     _system76_driver="${_system76_driver:-0}"
 
-    # fwupd
-    read -r -p "  Pre-install fwupd? (0/1, blocked during build either way) [0]: " _fwupd
-    _fwupd="${_fwupd:-0}"
-
-    # OpenSSH server
-    read -r -p "  Pre-install openssh-server? (0/1) [0]: " _openssh
-    _openssh="${_openssh:-0}"
-
-    # Cockpit
-    read -r -p "  Pre-install Cockpit from backports? (0/1) [0]: " _cockpit
-    _cockpit="${_cockpit:-0}"
-
     # Locale
     read -r -p "  System locale (blank to skip, e.g. en_US.UTF-8): " _locale
 
@@ -2577,11 +2404,6 @@ TARGET_PACSTALL=${_pacstall}
 # --- Extras ---
 TARGET_UBUNTU_STUDIO=${_ubuntu_studio}
 TARGET_SYSTEM76_DRIVER=${_system76_driver}
-
-# --- Optional services/tools (all default 0) ---
-TARGET_FWUPD=${_fwupd}
-TARGET_OPENSSH_SERVER=${_openssh}
-TARGET_COCKPIT=${_cockpit}
 WIZARD_EOF
 
     {
@@ -2647,9 +2469,7 @@ function load_config_file() {
                 TARGET_MATE_PACKAGE|TARGET_MATE_EXTRAS|TARGET_BROWSER|\
                 TARGET_BRAVE_CHANNEL|TARGET_LIBREWOLF|TARGET_FIREFOX|\
                 TARGET_FIREFOX_ESR|TARGET_FIREFOX_POPOS|TARGET_THUNDERBIRD|TARGET_UBUNTU_STUDIO|\
-                TARGET_PACSTALL|TARGET_SYSTEM76_DRIVER|TARGET_FWUPD|\
-                TARGET_OPENSSH_SERVER|TARGET_COCKPIT|\
-                TARGET_GNOME_INSTALL_RECOMMENDS|TARGET_NAME|\
+                TARGET_PACSTALL|TARGET_SYSTEM76_DRIVER|TARGET_GNOME_INSTALL_RECOMMENDS|TARGET_NAME|\
                 TARGET_LOCALE|TARGET_KEYBOARD_LAYOUT|TARGET_KEYBOARD_VARIANT|\
                 TARGET_INSTALLER|TARGET_PACKAGE_REMOVE|\
                 GRUB_LIVEBOOT_LABEL|UBUNTU_VANILLA_WORKSPACE|UVB_OUTPUT_DIR|NO_CONFIRM|\
@@ -2692,12 +2512,6 @@ function host_main() {
     local cli_pacstall=0
     local cli_system76_driver_set=0
     local cli_system76_driver=0
-    local cli_fwupd_set=0
-    local cli_fwupd=0
-    local cli_openssh_set=0
-    local cli_openssh=0
-    local cli_cockpit_set=0
-    local cli_cockpit=0
     local cli_locale=""
     local cli_keyboard_layout=""
     local cli_keyboard_variant=""
@@ -2859,36 +2673,6 @@ function host_main() {
             --no-system76-driver)
                 cli_system76_driver_set=1
                 cli_system76_driver=0
-                shift
-                ;;
-            --fwupd)
-                cli_fwupd_set=1
-                cli_fwupd=1
-                shift
-                ;;
-            --no-fwupd)
-                cli_fwupd_set=1
-                cli_fwupd=0
-                shift
-                ;;
-            --openssh-server)
-                cli_openssh_set=1
-                cli_openssh=1
-                shift
-                ;;
-            --no-openssh-server)
-                cli_openssh_set=1
-                cli_openssh=0
-                shift
-                ;;
-            --cockpit)
-                cli_cockpit_set=1
-                cli_cockpit=1
-                shift
-                ;;
-            --no-cockpit)
-                cli_cockpit_set=1
-                cli_cockpit=0
                 shift
                 ;;
             --pacstall)
@@ -3076,15 +2860,6 @@ function host_main() {
     if [[ "$cli_system76_driver_set" -eq 1 ]]; then
         export TARGET_SYSTEM76_DRIVER="$cli_system76_driver"
     fi
-    if [[ "$cli_fwupd_set" -eq 1 ]]; then
-        export TARGET_FWUPD="$cli_fwupd"
-    fi
-    if [[ "$cli_openssh_set" -eq 1 ]]; then
-        export TARGET_OPENSSH_SERVER="$cli_openssh"
-    fi
-    if [[ "$cli_cockpit_set" -eq 1 ]]; then
-        export TARGET_COCKPIT="$cli_cockpit"
-    fi
     if [[ -n "$cli_locale" ]]; then
         export TARGET_LOCALE="$cli_locale"
     fi
@@ -3126,7 +2901,6 @@ function host_main() {
     resolve_ubuntu_studio_choice
     resolve_pacstall_choice
     resolve_system76_driver_choice
-    resolve_optional_service_choices
 
     check_settings
     set_target_kernel_package_from_flavor
@@ -3326,9 +3100,6 @@ deb-src $TARGET_UBUNTU_MIRROR $TARGET_UBUNTU_VERSION-security main restricted un
 
 deb $TARGET_UBUNTU_MIRROR $TARGET_UBUNTU_VERSION-updates main restricted universe multiverse
 deb-src $TARGET_UBUNTU_MIRROR $TARGET_UBUNTU_VERSION-updates main restricted universe multiverse
-
-deb $TARGET_UBUNTU_MIRROR $TARGET_UBUNTU_VERSION-backports main restricted universe multiverse
-deb-src $TARGET_UBUNTU_MIRROR $TARGET_UBUNTU_VERSION-backports main restricted universe multiverse
 EOF
 
     echo "$TARGET_NAME" > /etc/hostname
@@ -3336,7 +3107,6 @@ EOF
     apt-get update
 
     block_snapd
-    block_fwupd
 
     apt-get install -y libterm-readline-gnu-perl systemd-sysv
 
@@ -3638,10 +3408,6 @@ EOF
 function finish_up() {
     echo "=====> finish_up"
 
-    # The fwupd ban is build-time only: drop it here so users of the shipped
-    # system can install fwupd normally. (The snapd pin stays by design.)
-    unblock_fwupd
-
     truncate -s 0 /etc/machine-id
 
     # -f: keep this stage re-runnable (advanced mode) after the symlink was
@@ -3672,9 +3438,6 @@ function chroot_main() {
     export TARGET_THUNDERBIRD="${TARGET_THUNDERBIRD:-0}"
     export TARGET_UBUNTU_STUDIO="${TARGET_UBUNTU_STUDIO:-0}"
     export TARGET_SYSTEM76_DRIVER="${TARGET_SYSTEM76_DRIVER:-0}"
-    export TARGET_FWUPD="${TARGET_FWUPD:-0}"
-    export TARGET_OPENSSH_SERVER="${TARGET_OPENSSH_SERVER:-0}"
-    export TARGET_COCKPIT="${TARGET_COCKPIT:-0}"
     validate_ubiquity_jammy_only
     check_settings
     set_target_kernel_package_from_flavor
