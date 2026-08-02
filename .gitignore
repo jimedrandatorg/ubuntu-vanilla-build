@@ -5,3 +5,4 @@ scripts/build-img.cfg
 scripts/build-vm.cfg
 scripts/build-popos-img.cfg
 scripts/build-popos-vm.cfg
+scripts/cli-installer/my plan to create the installer.txt

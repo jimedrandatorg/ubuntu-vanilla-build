@@ -13,6 +13,7 @@ This project is designed for:
 ## What's New
 
 Recent improvements include:
+- **TTY / CLI Installer**: A Calamares-equivalent shell installer now ships on every ISO built by this project — `scripts/cli-installer/install-system`. Useful for installing from a TTY, a minimal/server ISO, or a headless VM console. Mirrors the same `welcome → locale → keyboard → partition → users → summary → mount → unpackfs → … → finished` sequence as the Calamares module list in `scripts/calamares/settings.conf`, and offers both TUI (whiptail/dialog) and plain text prompts. See [Installing from the Live ISO (CLI Installer)](#installing-from-the-live-iso-cli-installer).
 - **Removable Media Disk Images**: Two new builders produce ready-to-flash raw `.img` files for USB sticks, SD cards, and other removable media — `scripts/build-removable.sh` (Ubuntu) and `scripts/build-popos-removable.sh` (Pop!_OS). Choose UEFI-only or Hybrid (BIOS + UEFI) firmware, sparse truncate / fallocate / dd allocation, image size 8/16/32/64 GB or custom, a desktop-ready or CLI/TTY-only profile, and whether to bake user credentials in at build time or create the user after deployment via a first-boot console wizard. Partition layout adapts to image size (8 GB → 2 GB swap, 16 GB+ → 4 GB swap) and `growpart` resizes root on first boot so a smaller image works on larger media. See [Building Removable Media Disk Images](#building-removable-media-disk-images). `start-here.sh` now also offers
 - **Cloud & VM Disk Images**: Four new builders produce ready-to-use disk images instead of a live-installer ISO — `scripts/build-img.sh` (Ubuntu cloud `.img`), `scripts/build-vm.sh` (Ubuntu VM image with QCOW2/VDI/VMDK/VHDX exports), and their Pop!_OS counterparts `scripts/build-popos-img.sh` / `scripts/build-popos-vm.sh`. Choose UEFI-only or Hybrid (BIOS + UEFI) firmware, netplan/systemd-networkd or NetworkManager, the image allocation tool (sparse truncate, fallocate, or dd), disk size 32/64/128 GB or custom (fixed layout: 512 MB ESP + 4 GB swap + root gets the rest), a desktop-ready or CLI/TTY-only profile, and whether to bake user credentials in at build time or create the user after deployment (cloud-init for cloud images, a first-boot console wizard for VM images). See [Building Cloud & VM Disk Images](#building-cloud--vm-disk-images). `start-here.sh` now also asks which output type to build (`--output=iso|img|vm`).
 - **Pop!_OS ISO Variant**: `scripts/build-popos.sh` builds a Pop!_OS ISO from the official Pop!_OS APT repositories (staging excluded) — see [Building Pop!_OS ISOs](#building-popos-isos). `start-here.sh` now asks which distro to build (Ubuntu or Pop!_OS).
@@ -214,6 +215,66 @@ sudo dd if=ubuntu-noble-cli-removable-amd64-260726-120000.img of=/dev/sdX bs=4M 
 ```
 
 The first boot takes a few seconds longer than usual while growpart resizes the root partition to fill the rest of the stick and the first-boot wizard (if `--user-mode=deploy`) prompts on the console.
+
+---
+
+## Installing from the Live ISO (CLI Installer)
+
+Once you have built an ISO (Ubuntu or Pop!_OS) and booted a machine from it, the desktop variant launches **Calamares** automatically. A pure TTY/CLI environment has no desktop, so this project ships a Calamares-equivalent shell installer that walks the user through the same stages from a terminal:
+
+| Step | What it asks | Calamares module it mirrors |
+| --- | --- | --- |
+| Welcome | Pick TUI (whiptail/dialog) or plain text prompts | `welcome` |
+| Locale | Curated UTF-8 list (default `en_US.UTF-8`) | `locale` + `localecfg` |
+| Keyboard | XKB layout (default `us`) | `keyboard` |
+| Timezone | Tries NTP via `timedatectl`; falls back to the live clock if offline | `locale` (`useSystemTimezone: true`, no GeoIP) |
+| Disk | Erase (Calamares GPT layout) **or** Manual (`cfdisk`) | `partition` |
+| User | Full name, username (validated), password (twice, min 8), hostname | `users` |
+| Summary | Review every answer, then confirm | `summary` |
+| Install | Mount → unpack squashfs → machine-id → fstab → locale → keyboard → initramfs touch → users → display manager → network → hwclock → initramfs → grubcfg → GRUB install → packages → umount | full `exec:` sequence |
+| Finished | `systemctl -i reboot` into the new system | `finished` |
+
+Source: [scripts/cli-installer/install-system](scripts/cli-installer/install-system) (~1 200 lines, single self-contained bash script, passes `bash -n` and `shellcheck` cleanly).
+
+### How to use it
+
+The installer is a single self-contained bash script —
+[`scripts/cli-installer/install-system`](scripts/cli-installer/install-system).
+To use it on the live system, **make it executable first**, then **copy it
+into the system** (e.g. `/usr/local/bin/`), then **run it**:
+
+```bash
+# 1. Make it executable FIRST (a fresh checkout from the repo or a fresh
+#    copy off the live media is not always +x):
+chmod +x scripts/cli-installer/install-system
+
+# 2. Copy the script into the system — install(1) sets mode 0755 in one step:
+sudo install -m 0755 scripts/cli-installer/install-system /usr/local/bin/
+
+# 3. Run it as a normal system command:
+sudo install-system
+```
+
+If you are iterating on the script and only need it on the live system
+temporarily, you can skip step 2 and run it in place:
+
+```bash
+chmod +x scripts/cli-installer/install-system
+sudo ./scripts/cli-installer/install-system
+```
+
+> The script aborts with a clear error if `/cdrom/casper/filesystem.squashfs`
+> is not present — it is designed to run from the live ISO. For a non-live
+> / minimal environment, debootstrap the rootfs manually first, then call
+> the same chroot steps.
+
+### What it does **not** do
+
+- **LUKS full-disk encryption** — Calamares offers it; the CLI installer intentionally does not (use `cfdisk` to set up LUKS by hand if you need it).
+- **Unattended / non-interactive mode** — by design, every step is answered on the TTY.
+- **GeoIP** — the live ISO ships with no GeoIP (see `scripts/calamares/modules/locale.conf`), so the timezone step always asks the user.
+
+For more detail see [scripts/cli-installer/README.md](scripts/cli-installer/README.md).
 
 ---
 

@@ -71,6 +71,18 @@ The Calamares installer configuration files are stored inside the `calamares/` s
 - **branding/**: Holds installer branding (`branding.desc`, rendered with the release version at build time), the logo/icon images, and the install slideshow (`show.qml`).
 - **i18n/SUPPORTED**: Curated locale list that keeps the installer's language step responsive.
 
+## The CLI Installer (`cli-installer/`)
+
+For machines where Calamares cannot run (no display, a minimal/server ISO, or
+a TTY-only VM console), this project also ships a Calamares-equivalent shell
+installer: [`cli-installer/install-system`](cli-installer/install-system). It
+walks the user through the same `welcome → locale → keyboard → partition →
+users → summary → mount → unpackfs → … → finished` sequence from a terminal
+and uses the exact same YAML configs under `calamares/` and `calamares-popos/`
+as its source of truth. See the main [README](../../README.md#installing-from-the-live-iso-cli-installer)
+or [cli-installer/README.md](cli-installer/README.md) for the install
+command, UI mode, and feature limits.
+
 ---
 
 ## Workspace Lifecycle and Cleanups
